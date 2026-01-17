@@ -1,0 +1,56 @@
+{
+    "name": "nben/laravel-comment",
+    "description": "A flexible comment system for Laravel with nested replies and likes.",
+    "keywords": [
+        "laravel",
+        "comments",
+        "likes",
+        "nested-comments",
+        "polymorphic",
+        "replies",
+        "threaded-comments"
+    ],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Nben",
+            "email": "hello@nben.com.np"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "laravel/framework": "^9.0|^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^7.0|^8.0|^9.0",
+        "phpunit/phpunit": "^9.5|^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nben\\LaravelComment\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nben\\LaravelComment\\Tests\\": "tests/",
+            "Nben\\LaravelComment\\Tests\\Models\\": "tests/Models/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Nben\\LaravelComment\\CommentServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
