@@ -16,6 +16,8 @@ A flexible, framework-agnostic comment system for Laravel with nested replies an
 - **UUID Support** - Optional UUID primary keys
 - **Framework Agnostic** - No dependency on Laravel's auth system
 - **Clean API** - Intuitive, Laravel-like API
+- **Eager Loading** - N+1 query prevention
+- **Aggregations** - Built-in counting and ordering methods
 
 ## Requirements
 
@@ -211,6 +213,48 @@ $likedComments = $user->commentedLikes;
 $count = $comment->likes_count;
 ```
 
+### Scopes and Query Methods
+
+```php
+use Nben\LaravelComment\Comment;
+
+// Get recent comments
+$recent = Comment::latest()->take(10)->get();
+
+// Get most liked comments
+$popular = Comment::orderBy('likes_count', 'desc')->take(10)->get();
+
+// Get only parent comments
+$parents = Comment::parents()->get();
+
+// Get only replies
+$replies = Comment::replies()->get();
+
+// Get comments on specific model
+$postComments = Comment::of($post)->get();
+
+// Get comments by specific user
+$userComments = Comment::commentedBy($user)->get();
+
+// Order models by comment count
+$popularPosts = Post::orderByCommentsCountDesc()->get();
+$leastCommented = Post::orderByCommentsCountAsc()->get();
+```
+
+### Aggregations
+
+```php
+// Comments count
+$post->comments()->count();
+$post->allComments()->count();
+
+// With conditions
+$post->comments()->where('created_at', '>', now()->subDays(7))->count();
+
+// Likes count
+$comment->likes()->count();
+```
+
 ### Deleting Comments
 
 ```php
@@ -242,8 +286,8 @@ $user->likeComment($comment);
 ### Example 2: Building a Comment System
 
 ```php
-// Get the current user (however you manage users)
-$currentUser = getCurrentUser(); // Your custom method
+// Get the current user
+$currentUser = auth()->user();
 
 // Post a comment
 $post = Post::find(1);
@@ -273,6 +317,36 @@ $reply2 = $reply1->reply($user, 'Nested reply');
 $comments = $post->getCommentsWithReplies();
 ```
 
+### Example 4: Eager Loading (Preventing N+1)
+
+```php
+// Load comments with relationships
+$comments = $post->comments()
+    ->with(['commenter', 'replies.commenter', 'likers'])
+    ->get();
+
+// Now accessing relationships won't trigger additional queries
+foreach ($comments as $comment) {
+    echo $comment->commenter->name; // No additional query
+    foreach ($comment->replies as $reply) {
+        echo $reply->commenter->name; // No additional query
+    }
+}
+```
+
+### Example 5: Most Commented Posts
+
+```php
+// Get posts ordered by comment count
+$popularPosts = Post::withCount('allComments')
+    ->orderByDesc('all_comments_count')
+    ->take(10)
+    ->get();
+
+// Or use the built-in scope
+$popularPosts = Post::orderByCommentsCountDesc()->take(10)->get();
+```
+
 ## Events
 
 The package dispatches the following events:
@@ -295,124 +369,6 @@ protected $listen = [
 ];
 ```
 
-## Blade Example
-
-```blade
-{{-- Display comments with replies --}}
-@foreach($post->getCommentsWithReplies() as $comment)
-    <div class="comment">
-        <div class="comment-header">
-            <strong>{{ $comment->commenter->name }}</strong>
-            <small>{{ $comment->created_at->diffForHumans() }}</small>
-        </div>
-        
-        <div class="comment-body">
-            {{ $comment->content }}
-        </div>
-        
-        <div class="comment-actions">
-            <span>{{ $comment->likes_count }} likes</span>
-            <span>{{ $comment->replies_count }} replies</span>
-            
-            @if($currentUser->hasLikedComment($comment))
-                <button wire:click="unlike({{ $comment->id }})">Unlike</button>
-            @else
-                <button wire:click="like({{ $comment->id }})">Like</button>
-            @endif
-            
-            <button wire:click="showReplyForm({{ $comment->id }})">Reply</button>
-        </div>
-        
-        {{-- Display replies --}}
-        @if($comment->replies->isNotEmpty())
-            <div class="replies ml-8">
-                @foreach($comment->replies as $reply)
-                    <div class="reply">
-                        <strong>{{ $reply->commenter->name }}</strong>
-                        <p>{{ $reply->content }}</p>
-                        <small>{{ $reply->likes_count }} likes</small>
-                    </div>
-                @endforeach
-            </div>
-        @endif
-    </div>
-@endforeach
-
-{{-- Comment form --}}
-<form wire:submit.prevent="submitComment">
-    <textarea wire:model="commentContent" placeholder="Write a comment..."></textarea>
-    <button type="submit">Comment</button>
-</form>
-```
-
-## Livewire Example
-
-```php
-use Livewire\Component;
-use Nben\LaravelComment\Comment;
-
-class PostComments extends Component
-{
-    public $post;
-    public $commentContent;
-    public $replyContent;
-    public $replyingTo;
-
-    public function submitComment()
-    {
-        $this->validate(['commentContent' => 'required|min:1']);
-        
-        // Get current user from your system
-        $user = $this->getCurrentUser();
-        
-        $this->post->comment($user, $this->commentContent);
-        $this->commentContent = '';
-    }
-
-    public function submitReply($commentId)
-    {
-        $this->validate(['replyContent' => 'required|min:1']);
-        
-        $comment = Comment::findOrFail($commentId);
-        $user = $this->getCurrentUser();
-        
-        $comment->reply($user, $this->replyContent);
-        
-        $this->replyContent = '';
-        $this->replyingTo = null;
-    }
-
-    public function like($commentId)
-    {
-        $comment = Comment::findOrFail($commentId);
-        $user = $this->getCurrentUser();
-        
-        $user->likeComment($comment);
-    }
-
-    public function unlike($commentId)
-    {
-        $comment = Comment::findOrFail($commentId);
-        $user = $this->getCurrentUser();
-        
-        $user->unlikeComment($comment);
-    }
-
-    protected function getCurrentUser()
-    {
-        // Your logic to get current user
-        return auth()->user(); // Or however you manage users
-    }
-
-    public function render()
-    {
-        return view('livewire.post-comments', [
-            'comments' => $this->post->getCommentsWithReplies()
-        ]);
-    }
-}
-```
-
 ## Advanced Usage
 
 ### Custom Comment Model
@@ -432,6 +388,12 @@ class Comment extends BaseComment
     {
         return $this->created_at != $this->updated_at;
     }
+    
+    // Add custom methods
+    public function markAsSpam()
+    {
+        $this->update(['is_spam' => true]);
+    }
 }
 ```
 
@@ -441,33 +403,82 @@ Update config:
 'comment_model' => \App\Models\Comment::class,
 ```
 
-### Eager Loading
+### Attach Comment Status
+
+Similar to `laravel-follow`, you can attach comment status to collections:
 
 ```php
-$comments = $post->comments()
-    ->with(['commenter', 'replies.commenter', 'likers'])
-    ->get();
+$comments = Comment::all();
+$post->attachCommentStatus($comments);
+
+// Now each comment has 'has_commented' and 'commented_at' attributes
+foreach ($comments as $comment) {
+    if ($comment->has_commented) {
+        echo "Commented at: " . $comment->commented_at;
+    }
+}
 ```
 
-### Querying
+## Best Practices
+
+### 1. Use Eager Loading
+
+Always use eager loading to prevent N+1 queries:
 
 ```php
-use Nben\LaravelComment\Comment;
+$comments = Comment::with(['commenter', 'replies.commenter', 'likers'])->get();
+```
 
-// Get recent comments
-$recent = Comment::latest()->take(10)->get();
+### 2. Limit Reply Depth
 
-// Get most liked comments
-$popular = Comment::orderBy('likes_count', 'desc')->take(10)->get();
+Set a reasonable `max_nesting_depth` in config (2-3 recommended):
 
-// Get only parent comments
-$parents = Comment::parents()->get();
+```php
+'max_nesting_depth' => 3,
+```
 
-// Get only replies
-$replies = Comment::replies()->get();
+### 3. Cache Heavy Queries
 
-// Get comments on specific model type
-$postComments = Comment::where('commentable_type', Post::class)->get();
+For high-traffic applications, cache comment counts:
+
+```php
+$commentCount = Cache::remember("post.{$post->id}.comments", 3600, function () use ($post) {
+    return $post->allCommentsCount();
+});
+```
+
+### 4. Use Database Transactions
+
+When performing multiple operations:
+
+```php
+DB::transaction(function () use ($post, $user) {
+    $comment = $post->comment($user, 'Great post!');
+    $user->likeComment($comment);
+});
+```
+
+## Performance Tips
+
+1. **Index Usage**: The package creates optimized indexes for common queries
+2. **Batch Operations**: Use chunk() for large datasets
+3. **Select Specific Columns**: Only select what you need
+4. **Pagination**: Always paginate large result sets
+
+```php
+// Good
+$comments = Comment::select('id', 'content', 'created_at')
+    ->paginate(20);
+
+// Better with eager loading
+$comments = Comment::with('commenter:id,name')
+    ->paginate(20);
+```
+
+## Testing
+
+```bash
+composer test
 ```
 
 ## License
@@ -477,3 +488,7 @@ The MIT License (MIT). Please see [License File](LICENSE) for more information.
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+## Credits
+
+Inspired by [overtrue/laravel-follow](https://github.com/overtrue/laravel-follow).

@@ -4,8 +4,10 @@ namespace Nben\LaravelComment;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Support\Str;
 use Nben\LaravelComment\Events\CommentCreated;
 use Nben\LaravelComment\Events\CommentDeleted;
 
@@ -31,6 +33,12 @@ class Comment extends Model
     public function __construct(array $attributes = [])
     {
         $this->table = config('comment.comments_table', 'comments');
+
+        if (config('comment.uuids')) {
+            $this->keyType = 'string';
+            $this->incrementing = false;
+        }
+
         parent::__construct($attributes);
     }
 
@@ -39,12 +47,16 @@ class Comment extends Model
         parent::boot();
 
         static::creating(function ($comment) {
+            if (config('comment.uuids')) {
+                $comment->{$comment->getKeyName()} = $comment->{$comment->getKeyName()} ?: (string) Str::orderedUuid();
+            }
+
             if ($comment->parent_id) {
                 $parent = static::find($comment->parent_id);
                 if ($parent) {
                     $depth = $parent->depth();
                     $maxDepth = config('comment.max_nesting_depth');
-                    
+
                     if ($maxDepth !== null && $depth >= $maxDepth) {
                         throw new \Exception("Maximum nesting depth of {$maxDepth} reached.");
                     }
@@ -54,18 +66,20 @@ class Comment extends Model
 
         static::created(function ($comment) {
             if ($comment->parent_id) {
-                static::where('id', $comment->parent_id)->increment('replies_count');
+                static::where($comment->getKeyName(), $comment->parent_id)
+                    ->increment('replies_count');
             }
         });
 
         static::deleted(function ($comment) {
             if ($comment->parent_id) {
-                static::where('id', $comment->parent_id)->decrement('replies_count');
+                static::where($comment->getKeyName(), $comment->parent_id)
+                    ->decrement('replies_count');
             }
-            
+
             // Delete all replies
             $comment->replies()->delete();
-            
+
             // Delete all likes
             $comment->likes()->delete();
         });
@@ -95,7 +109,7 @@ class Comment extends Model
             ->orderBy('created_at', 'asc');
     }
 
-    public function likes()
+    public function likes(): HasMany
     {
         return $this->hasMany(
             config('comment.comment_like_model', CommentLike::class),
@@ -103,7 +117,7 @@ class Comment extends Model
         );
     }
 
-    public function likers()
+    public function likers(): BelongsToMany
     {
         return $this->belongsToMany(
             config('comment.user_model', \App\Models\User::class),
@@ -116,12 +130,12 @@ class Comment extends Model
     public function reply($user, string $content): self
     {
         $userForeignKey = config('comment.user_foreign_key', 'user_id');
-        
+
         $reply = static::create([
             'content' => $content,
             'commentable_id' => $this->commentable_id,
             'commentable_type' => $this->commentable_type,
-            'parent_id' => $this->id,
+            'parent_id' => $this->{$this->getKeyName()},
             $userForeignKey => $user->{$user->getKeyName()},
         ]);
 
@@ -134,6 +148,12 @@ class Comment extends Model
             $userId = $user;
         } else {
             $userId = $user->{$user->getKeyName()};
+        }
+
+        if ($this->relationLoaded('likers')) {
+            return $this->likers
+                ->where(config('comment.user_foreign_key', 'user_id'), $userId)
+                ->isNotEmpty();
         }
 
         return $this->likers()
@@ -174,10 +194,21 @@ class Comment extends Model
         return $query->whereNotNull('parent_id');
     }
 
-    public function scopeWithDepth($query, int $depth = null)
+    public function scopeOf($query, Model $model)
+    {
+        return $query->where('commentable_type', $model->getMorphClass())
+            ->where('commentable_id', $model->getKey());
+    }
+
+    public function scopeCommentedBy($query, Model $user)
+    {
+        return $query->where(config('comment.user_foreign_key', 'user_id'), $user->getKey());
+    }
+
+    public function scopeWithDepth($query, ?int $depth = null)
     {
         $depth = $depth ?? config('comment.max_nesting_depth', 3);
-        
+
         return $query->with(['replies' => function ($q) use ($depth) {
             if ($depth > 1) {
                 $q->withDepth($depth - 1);

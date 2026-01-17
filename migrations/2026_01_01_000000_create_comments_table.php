@@ -14,36 +14,37 @@ class CreateCommentsTable extends Migration
             } else {
                 $table->id();
             }
-            
+
             $userForeignKey = config('comment.user_foreign_key', 'user_id');
-            
+
             if (config('comment.uuids')) {
                 $table->uuid($userForeignKey)->index();
             } else {
                 $table->unsignedBigInteger($userForeignKey)->index();
             }
-            
+
             if (config('comment.uuids')) {
                 $table->uuidMorphs('commentable');
             } else {
                 $table->morphs('commentable');
             }
-            
+
             if (config('comment.uuids')) {
                 $table->uuid('parent_id')->nullable()->index();
             } else {
                 $table->unsignedBigInteger('parent_id')->nullable()->index();
             }
-            
+
             $table->text('content');
-            $table->unsignedInteger('likes_count')->default(0);
-            $table->unsignedInteger('replies_count')->default(0);
-            
+            $table->unsignedInteger('likes_count')->default(0)->index();
+            $table->unsignedInteger('replies_count')->default(0)->index();
+
             $table->timestamps();
-            
-            $table->index(['commentable_type', 'commentable_id', 'created_at']);
-            $table->index(['parent_id', 'created_at']);
-            $table->index('created_at');
+
+            // Composite indexes for better query performance
+            $table->index(['commentable_type', 'commentable_id', 'parent_id', 'created_at'], 'idx_commentable_parent_created');
+            $table->index(['parent_id', 'created_at'], 'idx_parent_created');
+            $table->index([$userForeignKey, 'created_at'], 'idx_user_created');
         });
     }
 

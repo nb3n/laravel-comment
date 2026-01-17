@@ -2,8 +2,8 @@
 
 namespace Nben\LaravelComment\Traits;
 
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Nben\LaravelComment\Comment;
 use Nben\LaravelComment\CommentLike;
 
@@ -20,13 +20,21 @@ trait CanComment
     public function comment($commentable, string $content): Comment
     {
         $userForeignKey = config('comment.user_foreign_key', 'user_id');
-        
-        $comment = $commentable->allComments()->create([
+
+        $comment = $commentable->comments()->create([
             'content' => $content,
             $userForeignKey => $this->{$this->getKeyName()},
         ]);
 
         return $comment;
+    }
+
+    public function commentLikes(): HasMany
+    {
+        return $this->hasMany(
+            config('comment.comment_like_model', CommentLike::class),
+            config('comment.user_foreign_key', 'user_id')
+        );
     }
 
     public function commentedLikes(): BelongsToMany
@@ -42,19 +50,18 @@ trait CanComment
     public function likeComment($comment): CommentLike
     {
         $comment = $this->getCommentModel($comment);
-        
+
         if ($this->hasLikedComment($comment)) {
-            return $this->commentedLikes()
-                ->where('comment_id', $comment->id)
-                ->first()
-                ->pivot;
+            return $this->commentLikes()
+                ->where('comment_id', $comment->{$comment->getKeyName()})
+                ->first();
         }
 
         $userForeignKey = config('comment.user_foreign_key', 'user_id');
-        
+
         $like = (new (config('comment.comment_like_model', CommentLike::class)))->create([
             $userForeignKey => $this->{$this->getKeyName()},
-            'comment_id' => $comment->id,
+            'comment_id' => $comment->{$comment->getKeyName()},
         ]);
 
         return $like;
@@ -63,12 +70,12 @@ trait CanComment
     public function unlikeComment($comment): bool
     {
         $comment = $this->getCommentModel($comment);
-        
+
         $userForeignKey = config('comment.user_foreign_key', 'user_id');
-        
+
         $deleted = (new (config('comment.comment_like_model', CommentLike::class)))
             ->where($userForeignKey, $this->{$this->getKeyName()})
-            ->where('comment_id', $comment->id)
+            ->where('comment_id', $comment->{$comment->getKeyName()})
             ->delete();
 
         return (bool) $deleted;
@@ -86,9 +93,15 @@ trait CanComment
     public function hasLikedComment($comment): bool
     {
         $comment = $this->getCommentModel($comment);
-        
+
+        if ($this->relationLoaded('commentedLikes')) {
+            return $this->commentedLikes
+                ->where($comment->getKeyName(), $comment->{$comment->getKeyName()})
+                ->isNotEmpty();
+        }
+
         return $this->commentedLikes()
-            ->where('comment_id', $comment->id)
+            ->where('comment_id', $comment->{$comment->getKeyName()})
             ->exists();
     }
 
